@@ -1,0 +1,85 @@
+#!/bin/sh
+
+configfile="$HOME/.qdepl"
+
+msg() {
+	echo qdepl: "$@"
+}
+
+die() {
+	rc="$1"
+	shift
+	msg "$@" >&2
+	exit "$rc"
+}
+
+method_scp() {
+	for path in "$@"; do
+		echo "$path" | sed -e 's#^\(.*\)/\([^/]*\)$#\2/\1#'
+	done | sort -t / -k 2 | while read -r line; do
+		file="$(echo "$line" | cut -d / -f 1)"
+		if echo "$line" | grep -q /; then
+			reldir="$(echo "$line" | cut -d / -f 2-)/"
+		else
+			reldir=''
+		fi
+		# TODO: Files should be grouped by target directory.
+		scp -o VisualHostKey=no "$reldir$file" "$params/$reldir"
+	done
+}
+
+if [ -z "$1" ]; then
+	die 1 'you did not specify a profile'
+fi
+profile="$1"
+shift
+
+if [ ! -r "$configfile" ]; then
+	die 1 "cannot read config file: $configfile"
+fi
+
+# Current working directory with all symlinks resolved.
+cwd="$(pwd -P)"
+
+# Get home directory with all symlinks resolved.
+abshome="$(cd && pwd -P && cd - >/dev/null)"
+
+founddirmatch=''
+randeployment=''
+# Find a matching config file line.
+while read -r line; do
+	# Retrieve directory the rule applies to, replacing "~/", consecutive and trailing slashes.
+	dir="$(echo "$line" | cut -d : -f 1 | sed -e "s:^~/:$abshome/:" -e 's://*:/:g' -e 's:/$::')"
+	# dir with a trailing slash.
+	dirslash="$dir/"
+	if [ "$dirslash" = "$(echo "$cwd/" | cut -c 1-${#dirslash})" ]; then
+		# We are in a directory affected by that line.
+		founddirmatch='yes'
+		lineprofile="$(echo "$line" | cut -d : -f 2)"
+		if [ "$lineprofile" = "$profile" ]; then
+			method="$(echo "$line" | cut -d : -f 3)"
+			params="$(echo "$line" | cut -d : -f 4-)"
+			subdir="$(echo "$cwd" | cut -c ${#dirslash}-)"
+			case "$method" in
+				scp)
+					"method_$method" "$@"
+					;;
+				*)
+					die 2 "unknown deployment method: $method"
+					;;
+			esac
+			randeployment='yes'
+			break
+		fi
+	fi
+done < "$configfile"
+
+if [ "$randeployment" = 'yes' ]; then
+	exit 0
+fi
+
+if [ "$founddirmatch" = 'yes' ]; then
+	die 3 "unknown deployment profile: $profile"
+else
+	die 3 "no deployment configured for this directory"
+fi
