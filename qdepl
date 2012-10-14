@@ -1,11 +1,14 @@
 #!/bin/sh
 
+# Where the qdepl configuration lives.
 configfile="$HOME/.qdepl"
 
+# Output a message prefixed by "qdepl:".
 msg() {
 	echo qdepl: "$@"
 }
 
+# Output $2- to stdout and exit with return code $1.
 die() {
 	rc="$1"
 	shift
@@ -13,6 +16,7 @@ die() {
 	exit "$rc"
 }
 
+# scp the files in $@ to the host/directory specified by $params.
 method_scp() {
 	for path in "$@"; do
 		echo "$path" | sed -e 's#^\(.*\)/\([^/]*\)$#\2/\1#'
@@ -23,17 +27,23 @@ method_scp() {
 		else
 			reldir=''
 		fi
-		# TODO: Files should be grouped by target directory.
+		# TODO: Files should be grouped by target directory. Currently, a new
+		# SSH connection is opened for each file. If we group them, this problem
+		# would no longer exist. Another idea would be to keep a master
+		# connection open.
 		scp -o VisualHostKey=no "$reldir$file" "$params/$reldir"
 	done
 }
 
+# Check whether a profile was specified, else die.
 if [ -z "$1" ]; then
 	die 1 'you did not specify a profile'
 fi
+# Store it in $profile and shift off.
 profile="$1"
 shift
 
+# If the config file is not readable, die.
 if [ ! -r "$configfile" ]; then
 	die 1 "cannot read config file: $configfile"
 fi
@@ -44,8 +54,8 @@ cwd="$(pwd -P)"
 # Get home directory with all symlinks resolved.
 abshome="$(cd && pwd -P && cd - >/dev/null)"
 
-founddirmatch=''
-randeployment=''
+founddirmatch='' # Nonempty if we found a matching directory.
+randeployment='' # Nonempty if we ran a deployment.
 # Find a matching config file line.
 while read -r line; do
 	# Retrieve directory the rule applies to, replacing "~/", consecutive and trailing slashes.
@@ -55,8 +65,10 @@ while read -r line; do
 	if [ "$dirslash" = "$(echo "$cwd/" | cut -c 1-${#dirslash})" ]; then
 		# We are in a directory affected by that line.
 		founddirmatch='yes'
+		# The profile the current line defines.
 		lineprofile="$(echo "$line" | cut -d : -f 2)"
 		if [ "$lineprofile" = "$profile" ]; then
+			# The line matches the profile requested on the command line.
 			method="$(echo "$line" | cut -d : -f 3)"
 			params="$(echo "$line" | cut -d : -f 4-)"
 			subdir="$(echo "$cwd" | cut -c ${#dirslash}-)"
